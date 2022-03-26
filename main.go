@@ -4,10 +4,12 @@ import (
 	"fmt"
 	"html/template"
 	"log"
-	"net/http"
 	"os"
 	"sort"
+	"time"
 
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/markbates/goth"
 	"github.com/markbates/goth/gothic"
@@ -62,11 +64,9 @@ func (a *App) Start(restPort string) error {
 
 func main() {
 	goth.UseProviders(
-		twitter.New(os.Getenv("TWITTER_KEY"), os.Getenv("TWITTER_SECRET"), "http://localhost:3000/auth/twitter/callback"),
-		// If you'd like to use authenticate instead of authorize in Twitter provider, use this instead.
-		// twitter.NewAuthenticate(os.Getenv("TWITTER_KEY"), os.Getenv("TWITTER_SECRET"), "http://localhost:3000/auth/twitter/callback"),
-		google.New("761018294381-10818eir6j6bj312h8chd7vfndi7pp9h.apps.googleusercontent.com", "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", "http://localhost:3000/auth/google/callback"),
-		github.New(os.Getenv("GITHUB_KEY"), os.Getenv("GITHUB_SECRET"), "http://localhost:3000/auth/github/callback"),
+		twitter.New("key", "secret", "http://localhost:3000/auth/twitter/callback"),
+		google.New("key", "secret", "http://localhost:3000/auth/google/callback"),
+		github.New("key", "secret", "http://localhost:3000/auth/github/callback"),
 		apple.New(os.Getenv("APPLE_KEY"), os.Getenv("APPLE_SECRET"), "http://localhost:3000/auth/apple/callback", nil, apple.ScopeName, apple.ScopeEmail),
 	)
 
@@ -86,7 +86,13 @@ func main() {
 	providerIndex = &ProviderIndex{Providers: keys, ProvidersMap: m}
 
 	r := gin.Default()
-	r.GET("/auth/:provider/callback", func(c *gin.Context) {
+	store := cookie.NewStore([]byte("armin"))
+	store.Options(sessions.Options{
+		MaxAge: int(time.Second * time.Duration(1800)), //30min
+		Path:   "/",
+	})
+	r.Use(sessions.Sessions("dotenx", store))
+	r.GET("/auth/:provider/callback", sessions.Sessions("dotenx_session", store), func(c *gin.Context) {
 		prov := c.Param("provider")
 		q := c.Request.URL.Query()
 		q.Add("provider", prov)
@@ -96,27 +102,46 @@ func main() {
 			fmt.Fprintln(c.Writer, err)
 			return
 		}
+		session := sessions.Default(c)
+		session.Set("isAdmin", true)
+		err = session.Save()
+		if err != nil {
+			fmt.Fprintln(c.Writer, err)
+			return
+		}
 		t, _ := template.New("foo").Parse(userTemplate)
 		t.Execute(c.Writer, user)
 	})
 
-	r.GET("/logout/:provider", func(c *gin.Context) {
-		prov := c.Param("provider")
+	r.GET("/logout/:provider", sessions.Sessions("dotenx_session", store), func(c *gin.Context) {
+		session := sessions.Default(c)
+		fmt.Println("#######################")
+		fmt.Println(session)
+		fmt.Println(session.Get("isAdmin"))
+		fmt.Println("#######################")
+		/*prov := c.Param("provider")
 		q := c.Request.URL.Query()
 		q.Add("provider", prov)
 		c.Request.URL.RawQuery = q.Encode()
 		gothic.Logout(c.Writer, c.Request)
 		c.Writer.Header().Set("Location", "/")
-		c.Writer.WriteHeader(http.StatusTemporaryRedirect)
+		c.Writer.WriteHeader(http.StatusTemporaryRedirect)*/
 	})
 
-	r.GET("/auth/:provider", func(c *gin.Context) {
+	r.GET("/auth/:provider", sessions.Sessions("dotenx_session", store), func(c *gin.Context) {
 		// try to GET the user without re-authenticating
 		prov := c.Param("provider")
 		q := c.Request.URL.Query()
 		q.Add("provider", prov)
 		c.Request.URL.RawQuery = q.Encode()
 		if gothUser, err := gothic.CompleteUserAuth(c.Writer, c.Request); err == nil {
+			session := sessions.Default(c)
+			session.Set("isAdmin", true)
+			err = session.Save()
+			if err != nil {
+				fmt.Fprintln(c.Writer, err)
+				return
+			}
 			t, _ := template.New("foo").Parse(userTemplate)
 			t.Execute(c.Writer, gothUser)
 		} else {
@@ -152,7 +177,6 @@ var userTemplate = `
 <p>AvatarURL: {{.AvatarURL}} <img src="{{.AvatarURL}}"></p>
 <p>Description: {{.Description}}</p>
 <p>UserID: {{.UserID}}</p>
-<p>AccessToken: {{.AccessToken}}</p>
 <p>ExpiresAt: {{.ExpiresAt}}</p>
 <p>RefreshToken: {{.RefreshToken}}</p>
 `
