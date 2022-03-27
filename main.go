@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"log"
+	"net/http"
 	"os"
 	"sort"
 	"time"
@@ -114,18 +115,25 @@ func main() {
 	})
 
 	r.GET("/logout/:provider", sessions.Sessions("dotenx_session", store), func(c *gin.Context) {
-		session := sessions.Default(c)
-		fmt.Println("#######################")
-		fmt.Println(session)
-		fmt.Println(session.Get("isAdmin"))
-		fmt.Println("#######################")
-		/*prov := c.Param("provider")
+		prov := c.Param("provider")
 		q := c.Request.URL.Query()
 		q.Add("provider", prov)
 		c.Request.URL.RawQuery = q.Encode()
 		gothic.Logout(c.Writer, c.Request)
 		c.Writer.Header().Set("Location", "/")
-		c.Writer.WriteHeader(http.StatusTemporaryRedirect)*/
+		c.Writer.WriteHeader(http.StatusTemporaryRedirect)
+	})
+	r.GET("/check", sessions.Sessions("dotenx_session", store), func(c *gin.Context) {
+		session := sessions.Default(c)
+		fmt.Println(session)
+		isAdmin, ok := session.Get("isAdmin").(bool)
+		if !ok {
+			c.AbortWithStatus(401)
+		}
+		if isAdmin {
+			t, _ := template.New("check").Parse(checkTemplate)
+			t.Execute(c.Writer, nil)
+		}
 	})
 
 	r.GET("/auth/:provider", sessions.Sessions("dotenx_session", store), func(c *gin.Context) {
@@ -168,8 +176,12 @@ var indexTemplate = `{{range $key,$value:=.Providers}}
     <p><a href="/auth/{{$value}}">Log in with {{index $.ProvidersMap $value}}</a></p>
 {{end}}`
 
+var checkTemplate = `
+    <p>you are logged in and have access</p>`
+
 var userTemplate = `
 <p><a href="/logout/{{.Provider}}">logout</a></p>
+<p><a href="/check">check access</a></p>
 <p>Name: {{.Name}} [{{.LastName}}, {{.FirstName}}]</p>
 <p>Email: {{.Email}}</p>
 <p>NickName: {{.NickName}}</p>
